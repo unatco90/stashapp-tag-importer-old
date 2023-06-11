@@ -11,6 +11,11 @@ import traceback
 import logging
 
 def init_logging():
+    """Logging for console and output log file.
+
+    1. Logs INFO messages to console.
+    2. Logs INFO messages to stashdb_tag_importer.log.
+    """
     global logger
 
     # Logging
@@ -25,8 +30,7 @@ def init_logging():
     fileHandler = logging.FileHandler('stashdb_tag_importer.log'.format(datetime.now()), 'a', 'utf-8')
 
     # Set logging level for handlers.
-    # consoleHandler.setLevel(logging.INFO)
-    consoleHandler.setLevel(logging.DEBUG)
+    consoleHandler.setLevel(logging.INFO)
     fileHandler.setLevel(logging.DEBUG)
 
     # Create formatter and add it to handlers.
@@ -113,9 +117,9 @@ def logging_heading():
 def logging_footer():
     """Print a footing to the logger."""
     logger.info(f"--------------------------------------------------------")
-    # logger.info(f"")
 
 def stash_api_call(api_call, payload, sorting=None):
+    """Make Stash API calls and handle errors."""
     while True:
         try:
             if api_call == "find_tag":
@@ -177,6 +181,7 @@ def create_new_tags(tags):
                 stash_api_call("create_tag", tag_dict)
                 stats["tag_created"] += 1
             elif stashdb_tag['name'].lower() in list(map(str.lower, local_tag['aliases'])):
+                # If the tag exists as an alias, promote it from alis to tag.
                 promote_alias(local_tag, stashdb_tag, stashdb_tag['name'])
                 stats["alias_promoted"] += 1
             elif local_tag:
@@ -234,9 +239,9 @@ def merge_tags(tags):
             stats["error"] += 1
 
 def migrate_alias_update_stashdb(update_type, migration_list, migrate_tag):
-    """Update StashDB scenes, galleries, and performers."""
+    """Find scenes, markers, galleries, and performers with the old tag, and ADD the new tag to them."""
     for item in migration_list:
-        # migration_list is the list of scenes, galleries, and performers to be updated.
+        # migration_list is the list of scenes, markers, galleries, and performers to be updated.
         tags_to_migrate = []
         for tag in item['tags']:
             # Add each existing tag to a list so we can add it back to the original
@@ -422,13 +427,17 @@ def promote_alias(old_tag, new_tag, alias):
     migrate_alias_update_stashdb("marker", markers_to_migrate, new_tag) 
 
 def create_aliases(tags):
-    # Loop over tags scraped from StashDB.
+    """Create and migrate aliases.
 
+    1. If the alias does not exist, create it for the correct tag.
+    2. If the alias exists as an alias for a different tag, migrate it to the correct tag.
+    """
     logging_heading()
     logger.info(f"Create and Migrate Aliases")
     logging_footer()
 
     for stashdb_tag in tags:
+        # Loop over tags scraped from StashDB.
         try:
             local_tag = search_for_tag(stashdb_tag)
 
