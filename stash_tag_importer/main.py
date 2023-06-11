@@ -200,96 +200,132 @@ def create_new_tags(tags):
             logger.error(f"\nScript failed on tag \"{stashdb_tag}\".\n")
             logger.error(traceback.format_exc())
             stats["error"] += 1
+    report_stats()
 
-def merge_tags(tags):
-    """Merge tags where the source tag has an alias that should be associated with the destination tag."""
+def promote_alias(old_tag, new_tag, alias):
+    """Promote alias from an old tag to a new standalone tag.
 
+    This function does the following, in this order.
+    1. Promotes the alias from an old tag to a new tag.
+    2. Finds scenes, markers, galleries, and performers with the old tag, and
+    ADDS the new tag to them.
+
+    Data loss can occur if the proces is interrupted after step 1 is complete but step 2 has not finished.
+    """
+    # Get fresh data from the old tag.
+    old_tag = search_for_tag(old_tag)
+    logger.info(f"Promoting alias \"{alias}\" from \"{old_tag['name']}\" to standalone tag.")
+
+    # Store old tag ID in a dict for us to filter search against.
+    old_tag_dict = {
+        # This dict is a HierarchicalMultiCriterionInput.
+        # CriterionModifier and HierarchicalMultiCriterionInput Documentation:
+        # https://github.com/stashapp/stash/blob/develop/pkg/models/filter.go
+        "value": old_tag["id"],
+        "modifier": "INCLUDES", # "modifier" accepts CriterionModifier values.
+    }
+
+    # Search filter dict, containing our old tag ID to filter search against.
+    search_filter = {
+        # This dict is a SceneFilterType.
+        # SceneFilterType Documentation:
+        # https://github.com/stashapp/stash/blob/develop/pkg/models/scene.go
+        # Tags must be in their own dict.
+        # Add multiple "tags" entries with their own unique dict to add tags to search.
+        "tags": old_tag_dict,
+    }
+
+    # Remove alias from old tag.
+    for element in old_tag['aliases']:
+        # Loop through the aliases on the old tag and remove the matching alias in a case insensitive way.
+        if element.lower() == alias.lower():
+            old_tag['aliases'].remove(element)
+    old_tag_update_dict = {
+        "id": old_tag["id"],
+        "aliases": old_tag['aliases'],
+    }
+    stash_api_call("update_tag", old_tag_update_dict)
+
+    # Create new tag.
+    new_tag_dict = {
+        "name": new_tag["name"],
+        "description": new_tag["description"],
+    }
+    stash_api_call("create_tag", new_tag_dict)
+
+    # Get fresh data from the new tag that was just created.
+    new_tag = search_for_tag(new_tag)
+
+    # Search for scenes with our search_filter > old_tag_dict combo.
+    logger.info(f"Migrating tag \"{new_tag['name']}\" to scenes tagged with \"{old_tag['name']}\".")
+    scenes_to_migrate = stash_api_call("find_scenes", search_filter, {"per_page": -1, "sort": "title", "direction": "ASC"})
+    migrate_alias_update_stashdb("scene", scenes_to_migrate, new_tag)
+
+    logger.info(f"Migrating tag \"{new_tag['name']}\" to galleries tagged with \"{old_tag['name']}\".")
+    galleries_to_migrate = stash_api_call("find_galleries", search_filter, {"per_page": -1, "sort": "title", "direction": "ASC"})
+    migrate_alias_update_stashdb("gallery", galleries_to_migrate, new_tag)
+
+    logger.info(f"Migrating tag \"{new_tag['name']}\" to performers tagged with \"{old_tag['name']}\".")
+    performers_to_migrate = stash_api_call("find_performers", search_filter, {"per_page": -1, "sort": "name", "direction": "ASC"})
+    migrate_alias_update_stashdb("performer", performers_to_migrate, new_tag)    
+
+    logger.info(f"Migrating tag \"{new_tag['name']}\" to markers tagged with \"{old_tag['name']}\".")
+    markers_to_migrate = stash_api_call("find_scene_markers", search_filter)
+    migrate_alias_update_stashdb("marker", markers_to_migrate, new_tag)
+
+def create_aliases(tags):
+    """Create and migrate aliases.
+
+    1. If the alias does not exist, create it for the correct tag.
+    2. If the alias exists as an alias for a different tag, migrate it to the correct tag.
+    """
     logging_heading()
-    logger.info(f"Merge Tags")
+    logger.info(f"Create and Migrate Aliases")
     logging_footer()
 
     for stashdb_tag in tags:
-        # Loop over tags fetched from StashDB.
+        # Loop over tags scraped from StashDB.
         try:
             local_tag = search_for_tag(stashdb_tag)
 
             if local_tag:
-                # Destination tag ID that source tag will be merged into.
-                destination_tag_id = local_tag["id"]
-                destination_tag_name = local_tag["name"]
-                
+                # Loop through each alias associated with the current StashDB tag.
                 for alias in stashdb_tag["aliases"]:
+                    # logger.info(f"for alias \"{alias}\" in stashdb_tag['aliases'] \"{stashdb_tag['aliases']}\".")
                     # Loop through each alias associated with the current StashDB tag.
                     
                     # Find alias in local Stash instance.
                     alias_tag_search = stash_api_call("find_tag", {"name": alias})
+                    # logger.info(f"alias_tag_search \"{alias_tag_search}\".")
 
-                    if alias.lower() == alias_tag_search["name"].lower() and alias.lower() != destination_tag_name.lower():
-                        # If the StashDB Tag alias matches a Local Tag name, merge it into the StashDB Tag.
-                        # Make sure the alias is not the same as the destination tag name in the event of redundant tags.
+                    if not alias_tag_search:
+                        # If the StashDB alias does not exist as a local alias, create it.
+                        logger.info(f"Associating tag \"{local_tag['name']}\" with alias \"{alias}\".")
+                        local_tag['aliases'].append(alias)
+                        alias_update_dict = {
+                            "id": local_tag["id"],
+                            "aliases": local_tag['aliases'],
+                        }
+                        stash_api_call("update_tag", alias_update_dict)
+                        stats["alias_created"] += 1
+                    elif alias.lower() in list(map(str.lower, alias_tag_search['aliases'])):
+                        # If the StashDB alias is found as an alias for an existing local tag,
+                        # we need to migrate it.
+                        if alias_tag_search['id'] != local_tag['id']:
+                            # Make sure we don't attempt to migrate aliases to the same tag.
+                            migrate_alias(alias_tag_search, local_tag, alias)
+                            stats["alias_migrated"] += 1
+                            # Refresh local_tag with migrated tag so it doesn't get overwritten in a subsequent loop.
+                            local_tag = search_for_tag(stashdb_tag)
+                        elif alias_tag_search['id'] == local_tag['id']:
+                            logger.info(f"Tag \"{alias_tag_search['name']}\" already associated with alias \"{alias}\".")
 
-                        # Source tag ID of tag that will be merged.
-                        source_tag_id = alias_tag_search['id']
-
-                        logger.info(f"Merging alias \"{alias_tag_search['name']}\" into tag \"{local_tag['name']}\".")
-                        merge_dict = {
-                                "source": source_tag_id,
-                                "destination": destination_tag_id,
-                            }
-                        stash_api_call("merge_tag", merge_dict)
-                        stats["tag_merged"] += 1
-                    elif alias.lower() in list(map(str.lower, alias_tag_search["aliases"])):
-                        logger.info(f"Tag \"{alias_tag_search['name']}\" already associated with alias \"{alias}\".")
         except:
             logging_heading()
             logger.error(f"\nScript failed on tag \"{stashdb_tag}\".\n")
             logger.error(traceback.format_exc())
             stats["error"] += 1
-
-def migrate_alias_update_stashdb(update_type, migration_list, migrate_tag):
-    """Find scenes, markers, galleries, and performers with the old tag, and ADD the new tag to them."""
-    for item in migration_list:
-        # migration_list is the list of scenes, markers, galleries, and performers to be updated.
-        tags_to_migrate = []
-        for tag in item['tags']:
-            # Add each existing tag to a list so we can add it back to the original
-            # ID, plus the tag we are migrating.
-            tags_to_migrate.append(tag['id'])
-        
-        if not migrate_tag['id'] in tags_to_migrate:
-            # If the tag already exists in the place we're migrating to, skip migration.
-            tags_to_migrate.append(migrate_tag['id'])
-
-            update_dict = {
-                # Documentation for "tag_ids" here under func scenePartialFromInput:
-                # https://github.com/stashapp/stash/blob/develop/internal/api/resolver_mutation_scene.go
-                "id": item['id'],
-                "tag_ids": tags_to_migrate,
-            }
-
-            if update_type == "scene":
-                logger.info(f"Migrating tag \"{migrate_tag['name']}\" to scene \"{item['title']}\".")
-                stash_api_call("update_scene", update_dict)
-                stats["scene_tag_migrated"] += 1
-            elif update_type == "gallery":
-                logger.info(f"Migrating tag \"{migrate_tag['name']}\" to gallery \"{item['title']}\".")
-                stash_api_call("update_gallery", update_dict)
-                stats["gallery_tag_migrated"] += 1
-            elif update_type == "performer":
-                logger.info(f"Migrating tag \"{migrate_tag['name']}\" to performer \"{item['name']}\".")
-                stash_api_call("update_performer", update_dict)
-                stats["performer_tag_migrated"] += 1
-            elif update_type == "marker":
-                logger.info(f"Migrating tag \"{migrate_tag['name']}\" to marker ID \"{item['id']}\".")
-                # These additional items are required to update a scene marker
-                # so we're just redirecting them from the existing marker to
-                # the update_dict.
-                update_dict["title"] = item['title']
-                update_dict["seconds"] = item['seconds']
-                update_dict["scene_id"] = item['scene']['id']
-                update_dict["primary_tag_id"] = item['primary_tag']['id']
-                stash_api_call("update_scene_marker", update_dict)
-                stats["marker_tag_migrated"] += 1
+    report_stats()
 
 def migrate_alias(old_tag, new_tag, alias):
     """ Migrate alias from an old tag, to a new tag.
@@ -363,129 +399,96 @@ def migrate_alias(old_tag, new_tag, alias):
     }
     stash_api_call("update_tag", new_tag_update_dict)
 
-def promote_alias(old_tag, new_tag, alias):
-    """Promote alias from an old tag to a new standalone tag.
+def migrate_alias_update_stashdb(update_type, migration_list, migrate_tag):
+    """Find scenes, markers, galleries, and performers with the old tag, and ADD the new tag to them."""
+    for item in migration_list:
+        # migration_list is the list of scenes, markers, galleries, and performers to be updated.
+        tags_to_migrate = []
+        for tag in item['tags']:
+            # Add each existing tag to a list so we can add it back to the original
+            # ID, plus the tag we are migrating.
+            tags_to_migrate.append(tag['id'])
+        
+        if not migrate_tag['id'] in tags_to_migrate:
+            # If the tag already exists in the place we're migrating to, skip migration.
+            tags_to_migrate.append(migrate_tag['id'])
 
-    This function does the following, in this order.
-    1. Promotes the alias from an old tag to a new tag.
-    2. Finds scenes, markers, galleries, and performers with the old tag, and
-    ADDS the new tag to them.
+            update_dict = {
+                # Documentation for "tag_ids" here under func scenePartialFromInput:
+                # https://github.com/stashapp/stash/blob/develop/internal/api/resolver_mutation_scene.go
+                "id": item['id'],
+                "tag_ids": tags_to_migrate,
+            }
 
-    Data loss can occur if the proces is interrupted after step 1 is complete but step 2 has not finished.
-    """
-    # Get fresh data from the old tag.
-    old_tag = search_for_tag(old_tag)
-    logger.info(f"Promoting alias \"{alias}\" from \"{old_tag['name']}\" to standalone tag.")
+            if update_type == "scene":
+                logger.info(f"Migrating tag \"{migrate_tag['name']}\" to scene \"{item['title']}\".")
+                stash_api_call("update_scene", update_dict)
+                stats["scene_tag_migrated"] += 1
+            elif update_type == "gallery":
+                logger.info(f"Migrating tag \"{migrate_tag['name']}\" to gallery \"{item['title']}\".")
+                stash_api_call("update_gallery", update_dict)
+                stats["gallery_tag_migrated"] += 1
+            elif update_type == "performer":
+                logger.info(f"Migrating tag \"{migrate_tag['name']}\" to performer \"{item['name']}\".")
+                stash_api_call("update_performer", update_dict)
+                stats["performer_tag_migrated"] += 1
+            elif update_type == "marker":
+                logger.info(f"Migrating tag \"{migrate_tag['name']}\" to marker ID \"{item['id']}\".")
+                # These additional items are required to update a scene marker
+                # so we're just redirecting them from the existing marker to
+                # the update_dict.
+                update_dict["title"] = item['title']
+                update_dict["seconds"] = item['seconds']
+                update_dict["scene_id"] = item['scene']['id']
+                update_dict["primary_tag_id"] = item['primary_tag']['id']
+                stash_api_call("update_scene_marker", update_dict)
+                stats["marker_tag_migrated"] += 1
 
-    # Store old tag ID in a dict for us to filter search against.
-    old_tag_dict = {
-        # This dict is a HierarchicalMultiCriterionInput.
-        # CriterionModifier and HierarchicalMultiCriterionInput Documentation:
-        # https://github.com/stashapp/stash/blob/develop/pkg/models/filter.go
-        "value": old_tag["id"],
-        "modifier": "INCLUDES", # "modifier" accepts CriterionModifier values.
-    }
+def merge_tags(tags):
+    """Merge tags where the source tag has an alias that should be associated with the destination tag."""
 
-    # Search filter dict, containing our old tag ID to filter search against.
-    search_filter = {
-        # This dict is a SceneFilterType.
-        # SceneFilterType Documentation:
-        # https://github.com/stashapp/stash/blob/develop/pkg/models/scene.go
-        # Tags must be in their own dict.
-        # Add multiple "tags" entries with their own unique dict to add tags to search.
-        "tags": old_tag_dict,
-    }
-
-    # Remove alias from old tag.
-    for element in old_tag['aliases']:
-        # Loop through the aliases on the old tag and remove the matching alias in a case insensitive way.
-        if element.lower() == alias.lower():
-            old_tag['aliases'].remove(element)
-    old_tag_update_dict = {
-        "id": old_tag["id"],
-        "aliases": old_tag['aliases'],
-    }
-    stash_api_call("update_tag", old_tag_update_dict)
-
-    # Create new tag.
-    new_tag_dict = {
-        "name": new_tag["name"],
-        "description": new_tag["description"],
-    }
-    stash_api_call("create_tag", new_tag_dict)
-
-    # Get fresh data from the new tag that was just created.
-    new_tag = search_for_tag(new_tag)
-
-    # Search for scenes with our search_filter > old_tag_dict combo.
-    logger.info(f"Migrating tag \"{new_tag['name']}\" to scenes tagged with \"{old_tag['name']}\".")
-    scenes_to_migrate = stash_api_call("find_scenes", search_filter, {"per_page": -1, "sort": "title", "direction": "ASC"})
-    migrate_alias_update_stashdb("scene", scenes_to_migrate, new_tag)
-
-    logger.info(f"Migrating tag \"{new_tag['name']}\" to galleries tagged with \"{old_tag['name']}\".")
-    galleries_to_migrate = stash_api_call("find_galleries", search_filter, {"per_page": -1, "sort": "title", "direction": "ASC"})
-    migrate_alias_update_stashdb("gallery", galleries_to_migrate, new_tag)
-
-    logger.info(f"Migrating tag \"{new_tag['name']}\" to performers tagged with \"{old_tag['name']}\".")
-    performers_to_migrate = stash_api_call("find_performers", search_filter, {"per_page": -1, "sort": "name", "direction": "ASC"})
-    migrate_alias_update_stashdb("performer", performers_to_migrate, new_tag)    
-
-    logger.info(f"Migrating tag \"{new_tag['name']}\" to markers tagged with \"{old_tag['name']}\".")
-    markers_to_migrate = stash_api_call("find_scene_markers", search_filter)
-    migrate_alias_update_stashdb("marker", markers_to_migrate, new_tag) 
-
-def create_aliases(tags):
-    """Create and migrate aliases.
-
-    1. If the alias does not exist, create it for the correct tag.
-    2. If the alias exists as an alias for a different tag, migrate it to the correct tag.
-    """
     logging_heading()
-    logger.info(f"Create and Migrate Aliases")
+    logger.info(f"Merge Tags")
     logging_footer()
 
     for stashdb_tag in tags:
-        # Loop over tags scraped from StashDB.
+        # Loop over tags fetched from StashDB.
         try:
             local_tag = search_for_tag(stashdb_tag)
 
             if local_tag:
-                # Loop through each alias associated with the current StashDB tag.
+                # Destination tag ID that source tag will be merged into.
+                destination_tag_id = local_tag["id"]
+                destination_tag_name = local_tag["name"]
+                
                 for alias in stashdb_tag["aliases"]:
-                    # logger.info(f"for alias \"{alias}\" in stashdb_tag['aliases'] \"{stashdb_tag['aliases']}\".")
                     # Loop through each alias associated with the current StashDB tag.
                     
                     # Find alias in local Stash instance.
                     alias_tag_search = stash_api_call("find_tag", {"name": alias})
-                    # logger.info(f"alias_tag_search \"{alias_tag_search}\".")
 
-                    if not alias_tag_search:
-                        # If the StashDB alias does not exist as a local alias, create it.
-                        logger.info(f"Associating tag \"{local_tag['name']}\" with alias \"{alias}\".")
-                        local_tag['aliases'].append(alias)
-                        alias_update_dict = {
-                            "id": local_tag["id"],
-                            "aliases": local_tag['aliases'],
-                        }
-                        stash_api_call("update_tag", alias_update_dict)
-                        stats["alias_created"] += 1
-                    elif alias.lower() in list(map(str.lower, alias_tag_search['aliases'])):
-                        # If the StashDB alias is found as an alias for an existing local tag,
-                        # we need to migrate it.
-                        if alias_tag_search['id'] != local_tag['id']:
-                            # Make sure we don't attempt to migrate aliases to the same tag.
-                            migrate_alias(alias_tag_search, local_tag, alias)
-                            stats["alias_migrated"] += 1
-                            # Refresh local_tag with migrated tag so it doesn't get overwritten in a subsequent loop.
-                            local_tag = search_for_tag(stashdb_tag)
-                        elif alias_tag_search['id'] == local_tag['id']:
-                            logger.info(f"Tag \"{alias_tag_search['name']}\" already associated with alias \"{alias}\".")
+                    if alias.lower() == alias_tag_search["name"].lower() and alias.lower() != destination_tag_name.lower():
+                        # If the StashDB Tag alias matches a Local Tag name, merge it into the StashDB Tag.
+                        # Make sure the alias is not the same as the destination tag name in the event of redundant tags.
 
+                        # Source tag ID of tag that will be merged.
+                        source_tag_id = alias_tag_search['id']
+
+                        logger.info(f"Merging alias \"{alias_tag_search['name']}\" into tag \"{local_tag['name']}\".")
+                        merge_dict = {
+                                "source": source_tag_id,
+                                "destination": destination_tag_id,
+                            }
+                        stash_api_call("merge_tag", merge_dict)
+                        stats["tag_merged"] += 1
+                    elif alias.lower() in list(map(str.lower, alias_tag_search["aliases"])):
+                        logger.info(f"Tag \"{alias_tag_search['name']}\" already associated with alias \"{alias}\".")
         except:
             logging_heading()
             logger.error(f"\nScript failed on tag \"{stashdb_tag}\".\n")
             logger.error(traceback.format_exc())
             stats["error"] += 1
+    report_stats()
 
 def update_tags(tags):
     """Update tag names and descriptions."""
@@ -537,6 +540,7 @@ def update_tags(tags):
             logger.error(f"\nScript failed on tag \"{stashdb_tag}\".\n")
             logger.error(traceback.format_exc())
             stats["error"] += 1
+    report_stats()
 
 def init_stats():
     """Initialize stats dict."""
@@ -601,13 +605,10 @@ def main():
 
     # Work Block
     create_new_tags(tags)
-    report_stats()
     create_aliases(tags)
-    report_stats()
     merge_tags(tags)
-    report_stats()
     update_tags(tags)
-    report_stats()
+    
 
 if __name__ == "__main__":
     main()
