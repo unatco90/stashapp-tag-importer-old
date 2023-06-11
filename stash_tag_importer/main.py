@@ -14,7 +14,7 @@ def init_logging():
     """Logging for console and output log file.
 
     1. Logs INFO messages to console.
-    2. Logs INFO messages to stashdb_tag_importer.log.
+    2. Logs DEBUG messages to stashdb_tag_importer.log.
     """
     global logger
 
