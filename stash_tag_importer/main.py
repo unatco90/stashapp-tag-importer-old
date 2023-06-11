@@ -128,6 +128,9 @@ def logging_footer():
 
 def stash_api_call(api_call, payload, sorting=None):
     """Make Stash API calls and handle errors."""
+    api_fail_bit = 0
+    api_fail_count = 0
+
     while True:
         try:
             if api_call == "find_tag":
@@ -154,12 +157,24 @@ def stash_api_call(api_call, payload, sorting=None):
                 return stash_api.update_performer(payload)
             elif api_call == "update_scene_marker":
                  return stash_api.update_scene_marker(payload)
+
+            if api_fail_bit == 1:
+                logger.info("Recovered from API failure.")
+                stats["api_recovery"] += 1
+                stats["api_fail"] += 1
+
             break
         except:
+            api_fail_bit = 1
+            api_fail_count += 1
             logger.error(f"API Failure on Payload:")
             logger.error(f"{payload}")
             logger.error(traceback.format_exc())
-            stats["api_fail"] += 1
+            if api_fail_count > 5:
+                stats["api_fail"] += 1
+                logger.error("API call failed 5 times.")
+                report_stats()
+                os._exit(1)
             logger.info("Sleeping for 10 seconds, then trying API call again.")
             time.sleep(10)
 
@@ -559,6 +574,7 @@ def init_stats():
         "tag_description_updated": 0,
         "error": 0,
         "api_fail": 0,
+        "api_recovery": 0,
     }
 
 def report_stats():
@@ -581,6 +597,7 @@ def report_stats():
     logger.info(f"Tag Descriptions Updated : {stats['tag_description_updated']}")
     logger.info(f"-------------------------:")
     logger.info(f"API Call Failures        : {stats['api_fail']}")
+    logger.info(f"API Call Recoveries      : {stats['api_recovery']}")
     logger.info(f"Script Errors            : {stats['error']}")
     logger.info(f"-------------------------:")
     logger.info(f"")
