@@ -357,27 +357,42 @@ def init_stats():
     global stats
     stats = {
         "tag_created": 0,
-        "mismatched_tag_name": 0,
         "alias_created": 0,
+        "alias_promoted": 0,
         "tag_merged": 0,
-        "mismatched_alias_parent": 0,
-        "tag_updated": 0,
-        "tag_not_updated": 0,
+        "alias_migrated": 0,
+        "scene_tag_migrated": 0,
+        "gallery_tag_migrated": 0,
+        "performer_tag_migrated": 0,
+        "marker_tag_migrated": 0,
+        "tag_name_updated": 0,
+        "tag_description_updated": 0,
+        "error": 0,
+        "api_fail": 0,
     }
 
 def report_stats():
     """Print out stats."""
     logger.info(f"")
-    logger.info(f"------------------------:")
-    logger.info(f"Tags Created            : {stats['tag_created']}")
-    logger.info(f"Aliases Created         : {stats['alias_created']}")
-    logger.info(f"Tags Merged             : {stats['tag_merged']}")
-    logger.info(f"Mismatched Tags Fixed   : {stats['mismatched_tag_name']}")
-    logger.info(f"Mismatched Aliases Fixed: {stats['mismatched_alias_parent']}")
-    logger.info(f"------------------------:")
-    logger.info(f"Tags Updated            : {stats['tag_updated']}")
-    logger.info(f"Tags Not Updated        : {stats['tag_not_updated']}")
-    logger.info(f"------------------------:")
+    logger.info(f"Final Stats")
+    logger.info(f"-------------------------:")
+    logger.info(f"Tags Created             : {stats['tag_created']}")
+    logger.info(f"Tags Merged              : {stats['tag_merged']}")
+    logger.info(f"Aliases Created          : {stats['alias_created']}")
+    logger.info(f"Aliases Promoted         : {stats['alias_promoted']}")
+    logger.info(f"-------------------------:")
+    logger.info(f"Aliases Migrated         : {stats['alias_migrated']}")
+    logger.info(f"Scene Tags Migrated      : {stats['scene_tag_migrated']}")
+    logger.info(f"Marker Tags Migrated     : {stats['marker_tag_migrated']}")
+    logger.info(f"Gallery Tags Migrated    : {stats['gallery_tag_migrated']}")
+    logger.info(f"Performer Tags Migrated  : {stats['performer_tag_migrated']}")
+    logger.info(f"-------------------------:")
+    logger.info(f"Tag Names Updated        : {stats['tag_name_updated']}")
+    logger.info(f"Tag Descriptions Updated : {stats['tag_description_updated']}")
+    logger.info(f"-------------------------:")
+    logger.info(f"API Call Failures        : {stats['api_fail']}")
+    logger.info(f"Script Errors            : {stats['error']}")
+    logger.info(f"-------------------------:")
     logger.info(f"")
 
 def main():
