@@ -105,11 +105,6 @@ def search_for_tag(stashdb_tag):
     logger.info(f"Searching Local StashDB for \"{stashdb_tag['name']}\".")
     # Find current StashDB tag in local Stash instance.
     local_tag = stash_api.find_tag({"name": stashdb_tag["name"]})
-    # logger.debug(f"Local Tag Name: \"{local_tag['name']}\"")
-    # logger.debug(f"Local Tag ID: \"{local_tag['id']}\"")
-    # logger.debug(f"Local Tag Aliases:\n\"{local_tag['aliases']}\"")
-    # logger.debug(f"StashDB Tag Name: \"{stashdb_tag['name']}\"")
-    # logger.debug(f"StashDB Tag Aliases:\n\"{stashdb_tag['aliases']}\"")
     return local_tag
 
 def logging_heading():
@@ -133,8 +128,6 @@ def create_new_tags(tags):
             if not local_tag:
                 # Create tag if it does not exist.
                 # logger.info(f"Local tag \"{stashdb_tag['name']}\" does not exist, creating.")
-                # logger.debug(f"StashDB Tag Name: \"{stashdb_tag['name']}\"")
-                # logger.debug(f"StashDB Tag Description: \"{stashdb_tag['description']}\"")
                 stash_api.create_tag(
                     {
                         "name": stashdb_tag["name"],
@@ -144,8 +137,6 @@ def create_new_tags(tags):
                 stats["tag_created"] += 1
                 # report_stats()
             elif stashdb_tag['name'] in local_tag['aliases']:
-                # logger.debug(f"StashDB Tag \"{stashdb_tag['name']}\" found as alias of \"{local_tag['name']}\".")
-                # logger.debug(f"Local Tag Aliases: \"{local_tag['aliases']}\".")
                 # TODO - write the rest of the function.
         except:
             logging_heading()
@@ -166,11 +157,9 @@ def merge_tags(tags):
                 
                 for alias in stashdb_tag["aliases"]:
                     # Loop through each alias associated with the current StashDB tag.
-                    logger.debug(f"For \"{alias}\" in \"{stashdb_tag['aliases']}\"")
                     
                     # Find alias in local Stash instance.
                     alias_tag_search = stash_api.find_tag({"name": alias})
-                    # logger.debug(f"Search Result: \"{alias_tag_search}\"")
 
                     if alias == alias_tag_search["name"] and alias != destination_tag_name:
                         # If the StashDB Tag alias matches a Local Tag name, merge it into the StashDB Tag.
@@ -180,15 +169,6 @@ def merge_tags(tags):
                         # Source tag ID of tag that will be merged.
                         source_tag_id = alias_tag_search['id']
 
-                        logger.debug(f"StashDB Tag Name: \"{stashdb_tag['name']}\"")
-                        logger.debug(f"StashDB Aliases: \"{stashdb_tag['aliases']}\"")
-                        logger.debug(f"StashDB Matched Alias: \"{alias}\"")
-                        logger.debug(f"Local Tag Name: \"{alias_tag_search['name']}\"")
-                        logger.debug(f"Local Tag Aliases: \"{alias_tag_search['aliases']}\"")
-                        logger.debug(f"Source Tag ID: \"{source_tag_id}\"")
-                        logger.debug(f"↓ Merging Into ↓")
-                        logger.debug(f"StashDB Tag Name: \"{stashdb_tag['name']}\"")
-                        logger.debug(f"Destination Tag ID: \"{destination_tag_id}\"")
 
                         logger.info(f"Merging alias \"{alias_tag_search['name']}\" into tag \"{local_tag['name']}\"")
                         stash_api.merge_tag(
@@ -265,8 +245,6 @@ def migrate_alias(old_tag, new_tag, alias):
     old_tag = search_for_tag(old_tag)
     new_tag = search_for_tag(new_tag)
     logger.info(f"Mirating alias \"{alias}\" from \"{old_tag['name']}\" to \"{new_tag['name']}\".")
-    logger.debug(f"Old Tag: \"{old_tag}\".")
-    logger.debug(f"New Tag: \"{new_tag}\".")
 
     # Store old tag ID in a dict for us to filter search against.
     old_tag_dict = {
@@ -305,9 +283,7 @@ def migrate_alias(old_tag, new_tag, alias):
     migrate_alias_update_stashdb("marker", markers_to_migrate, new_tag) 
 
     # Remove alias from old tag.
-    logger.debug(f"Old Tag Aliases: \"{old_tag['aliases']}\".")
     old_tag['aliases'].remove(alias)
-    logger.debug(f"Old Tag Aliases: \"{old_tag['aliases']}\".")
     logger.debug(f"Old Tag ID: \"{old_tag['id']}\".")
     stash_api.update_tag(
         {
@@ -317,9 +293,7 @@ def migrate_alias(old_tag, new_tag, alias):
     )
 
     # Add alias to new tag.
-    logger.debug(f"New Tag Aliases: \"{new_tag['aliases']}\".")
     new_tag['aliases'].append(alias)
-    logger.debug(f"New Tag Aliases: \"{new_tag['aliases']}\".")
     logger.debug(f"New Tag ID: \"{new_tag['id']}\".")
     stash_api.update_tag(
         {
@@ -331,24 +305,19 @@ def migrate_alias(old_tag, new_tag, alias):
 
 def arrange_aliases(tags):
     # Loop over tags scraped from StashDB.
-    # logger.debug(f"tags: \"{tags}\"")
     for stashdb_tag in tags:
-        # logger.debug(f"stashdb_tag: \"{stashdb_tag}\"")
         try:
             logging_heading()
             local_tag = search_for_tag(stashdb_tag)
-            # logger.debug(f"local_tag: \"{local_tag}\"")
             logging_footer()
 
             if local_tag:
                 # Loop through each alias associated with the current StashDB tag.
                 for alias in stashdb_tag["aliases"]:
                     # Loop through each alias associated with the current StashDB tag.
-                    # logger.debug(f"For \"{alias}\" in \"{stashdb_tag['aliases']}\"")
                     
                     # Find alias in local Stash instance.
                     alias_tag_search = stash_api.find_tag({"name": alias})
-                    # logger.debug(f"Search Result: \"{alias_tag_search}\"")
 
                     if not alias_tag_search:
                         logging_heading()
