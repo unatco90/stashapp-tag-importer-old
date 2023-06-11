@@ -45,8 +45,13 @@ def init_logging():
     logger.addHandler(consoleHandler)
     logger.addHandler(fileHandler)
 
-def fetch_tags():
-    global total_count
+def get_stashdb_tags():
+    """Get tags from StashDB.
+
+    1. Cache tags from StashDB in a local JSON file.
+    2. Update the cache if the local tag count is different from the StashDB tag count.
+    """
+    global total_stashdb_tags
     stash_box = StashBoxInterface(
         {
             "endpoint": os.environ["STASHBOX_ENDPOINT"],
@@ -68,45 +73,48 @@ def fetch_tags():
         }
     """
     variables = {
-        "input": {"page": 1, "per_page": 100, "sort": "NAME", "direction": "DESC"}
+        "input": {"page": 1, "per_page": 100, "sort": "NAME", "direction": "ASC"}
     }
 
+    def fetch_tags():
+        """Fetches tags from StashDB and stores to variable."""
+        logger.info(f"Fetching page {variables['input']['page']}, found {len(stashdb_tags)} of {total_stashdb_tags} tags.")
+        while len(stashdb_tags) < total_stashdb_tags:
+            variables["input"]["page"] += 1
+            next_page = stash_box.callGQL(tag_query, variables)["queryTags"]
+            stashdb_tags.extend(next_page["tags"])
+            logger.info(f"Fetching page {variables['input']['page']}, found {len(stashdb_tags)} of {total_stashdb_tags} tags.")
+            time.sleep(0.75)
+        logger.info(f"Fetched {len(stashdb_tags)} tags.")
+        return stashdb_tags
+
+    logger.info(f"Checking for latest tags on StashDB.")
     initial_request = stash_box.callGQL(tag_query, variables)["queryTags"]
-    total_count = int(initial_request["count"])
-
-    all_tags = initial_request["tags"]
-    tag_count = 0
-
-    logger.info(f"Fetching tags from StashDB.")
-    while tag_count < total_count:
-        logger.info(f"Fetching page {variables['input']['page']}, found {len(all_tags)} of {total_count} tags.")
-        next_page = stash_box.callGQL(tag_query, variables)["queryTags"]
-        for tag in next_page['tags']:
-            tag_count += 1
-            logger.debug(f"Tag {tag_count}: {tag['name']}")
-        all_tags.extend(next_page["tags"])
-        time.sleep(0.75)
-        variables["input"]["page"] += 1
-
-    logger.info(f"Fetched {tag_count} tags.")
-
-    return all_tags
-
-# cache tags in a tags.json file so we don't need to repeat the requests every time
-def load_tags():
-    all_tags = None
-    tags_file = Path("tags.json")
-    if tags_file.is_file():
-        with open(tags_file) as fp:
-            all_tags = json.load(fp)
+    total_stashdb_tags = int(initial_request["count"])
+    stashdb_tags = initial_request["tags"]
+    cached_tags_file = Path("tags.json")
+    if cached_tags_file.is_file():
+        with open(cached_tags_file) as fp:
+            cached_tags = json.load(fp)
+        if len(cached_tags) == total_stashdb_tags:
+            logger.info(f"StashDB tag cache is up to date.")
+            return cached_tags
+        elif len(cached_tags) != total_stashdb_tags:
+            logger.info(f"cached_tags {len(cached_tags)}")
+            logger.info(f"total_stashdb_tags {total_stashdb_tags}")
+            logger.info(f"StashDB tag cache is out of date, updating.")
+            fetch_tags()
+            with open(cached_tags_file, "w") as fp:
+                json.dump(stashdb_tags, fp)
     else:
-        all_tags = fetch_tags()
-        with open("tags.json", "w") as fp:
-            json.dump(all_tags, fp)
-    return all_tags
+        logger.info(f"Creating StashDB tag cache.")
+        stashdb_tags = fetch_tags()
+        with open(cached_tags_file, "w") as fp:
+            json.dump(stashdb_tags, fp)
+        return stashdb_tags
 
 def search_for_tag(stashdb_tag):
-    # Find current StashDB tag in local Stash instance.
+    """Find current StashDB tag in local Stash instance."""
     return stash_api_call("find_tag", {"name": stashdb_tag["name"]})
 
 def logging_heading():
@@ -589,7 +597,7 @@ def main():
 
     init_logging()
     init_stats()
-    tags = load_tags()
+    tags = get_stashdb_tags()
 
     # Work Block
     create_new_tags(tags)
