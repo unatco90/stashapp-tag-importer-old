@@ -17,6 +17,9 @@ Creates tags and aliases, resolves tag conflicts, and updates tag titles and des
 
 ## Features
 * Stat logging and log output of changes to file ./stashdb_tag_importer.log.
+* Caches tags from StashDB to local .json file for offline processing.
+	* Automatically redownloads tags from StashDB if the StashDB tag count differs from local .json cache.
+* Error handling for Stash API so operations aren't missed due to random Stash Database locks or other issues.
 * Smart resolution of the following cases.
 	* Local Tag does not exist.
 		* Create tag.
